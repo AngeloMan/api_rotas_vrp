@@ -1,0 +1,23 @@
+# OSRM - Malha Rodoviária Local (Dados pesados ~12GB)
+osrm-local/
+
+# Python - Cache e Compilação
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Ambientes Virtuais e Dependências
+.venv/
+venv/
+env/
+ENV/
+
+# Configurações de IDEs
+.vscode/
+.idea/
+
+# Arquivos de Sistema
+.DS_Store
+Thumbs.db
+*.bak

@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # Motor de Mapas - Configurado para a malha do Brasil completo
+  # Motor de Mapas - Configurado para a malha do Brasil completo
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    container_name: osrm_matriz
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm-local:/data
+    command: osrm-routed --algorithm mld --max-table-size 10000 /data/brazil-latest.osrm
+    shm_size: '2gb'
+    restart: always
+
+  # API FastAPI + OR-Tools para Homologação
+  api:
+    build: .
+    container_name: api_otimizacao
+    ports:
+      - "8000:8000"
+    environment:
+      - OSRM_URL=http://osrm:5000
+    depends_on:
+      - osrm
+    restart: always
