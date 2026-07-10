@@ -418,24 +418,69 @@ def otimizar_osrm_ortools(cidades: List[dict], usuario: dict):
         index = next_index
 
     # Geração de Links de Despacho GPS
-    origin_lat, origin_lon = ordered_cidades[0]['lat'], ordered_cidades[0]['lon']
-    dest_lat, dest_lon = ordered_cidades[-1]['lat'], ordered_cidades[-1]['lon']
-    waypoints_list = [f"{c['lat']},{c['lon']}" for c in ordered_cidades[1:-1]]
-    waypoints_str = "|".join(waypoints_list)
-    
-    query_params = {
-        "api": "1",
-        "origin": f"{origin_lat},{origin_lon}",
-        "destination": f"{dest_lat},{dest_lon}",
-        "waypoints": waypoints_str
-    }
-    link_gmaps = f"https://www.google.com/maps/dir/?{urllib.parse.urlencode(query_params)}"
+    n_points = len(ordered_cidades)
 
-    apple_base = "https://maps.apple.com/directions?"
-    apple_source = f"source={origin_lat},{origin_lon}"
-    apple_dest = f"destination={dest_lat},{dest_lon}"
-    apple_waypoints = "".join([f"&waypoint={c['lat']},{c['lon']}" for c in ordered_cidades[1:-1]])
-    link_apple = f"{apple_base}{apple_source}&{apple_dest}{apple_waypoints}&mode=driving"
+    # 1. Google Maps (Limite de 10 paradas por link: 1 origem, 8 paradas intermediárias, 1 destino)
+    google_links = []
+    chunk_size_g = 10
+    step_g = chunk_size_g - 1  # 9
+
+    if n_points <= chunk_size_g:
+        chunks_g = [ordered_cidades]
+    else:
+        chunks_g = []
+        i = 0
+        while i < n_points - 1:
+            chunk = ordered_cidades[i:i + chunk_size_g]
+            chunks_g.append(chunk)
+            i += step_g
+
+    for chunk in chunks_g:
+        if len(chunk) < 2:
+            continue
+        origin_lat, origin_lon = chunk[0]['lat'], chunk[0]['lon']
+        dest_lat, dest_lon = chunk[-1]['lat'], chunk[-1]['lon']
+        waypoints_list = [f"{c['lat']},{c['lon']}" for c in chunk[1:-1]]
+        
+        query_params = {
+            "api": "1",
+            "origin": f"{origin_lat},{origin_lon}",
+            "destination": f"{dest_lat},{dest_lon}"
+        }
+        if waypoints_list:
+            query_params["waypoints"] = "|".join(waypoints_list)
+            
+        link_g = f"https://www.google.com/maps/dir/?{urllib.parse.urlencode(query_params)}"
+        google_links.append(link_g)
+
+    # 2. Apple Maps (Limite de 15 paradas por link: 1 origem, 13 paradas intermediárias, 1 destino)
+    apple_links = []
+    chunk_size_a = 15
+    step_a = chunk_size_a - 1  # 14
+
+    if n_points <= chunk_size_a:
+        chunks_a = [ordered_cidades]
+    else:
+        chunks_a = []
+        i = 0
+        while i < n_points - 1:
+            chunk = ordered_cidades[i:i + chunk_size_a]
+            chunks_a.append(chunk)
+            i += step_a
+
+    for chunk in chunks_a:
+        if len(chunk) < 2:
+            continue
+        origin_lat, origin_lon = chunk[0]['lat'], chunk[0]['lon']
+        dest_lat, dest_lon = chunk[-1]['lat'], chunk[-1]['lon']
+        
+        apple_base = "https://maps.apple.com/directions?"
+        apple_source = f"source={origin_lat},{origin_lon}"
+        apple_dest = f"destination={dest_lat},{dest_lon}"
+        apple_waypoints = "".join([f"&waypoint={c['lat']},{c['lon']}" for c in chunk[1:-1]])
+        
+        link_a = f"{apple_base}{apple_source}&{apple_dest}{apple_waypoints}&mode=driving"
+        apple_links.append(link_a)
 
     return {
         "status": "sucesso",
@@ -443,11 +488,11 @@ def otimizar_osrm_ortools(cidades: List[dict], usuario: dict):
         "tempo_total_minutos": round(route_time / 60, 2),
         "distancia_total_km": round(route_distance / 1000, 2),
         "ordem_entrega": [
-            {"nome": c['nome'], "lon": c['lon'], "lat": c['lat']} for c in ordered_cidades
+            {"name": c['nome'], "lon": c['lon'], "lat": c['lat']} for c in ordered_cidades
         ],
         "links_navegacao": {
-            "google_maps": link_gmaps,
-            "apple_maps": link_apple
+            "google_maps": google_links,
+            "apple_maps": apple_links
         }
     }
 

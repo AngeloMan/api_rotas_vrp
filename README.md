@@ -87,11 +87,11 @@ Cada ponto de parada enviado para a API é validado estritamente por meio do mod
 * `lat`: latitude em ponto flutuante (float)
 * `lon`: longitude em ponto flutuante (float)
 
-### 2. Limitações de Links de Despacho GPS
-Ao gerar os links de despacho de rotas para os motoristas no retorno da API:
-* **Google Maps**: Possui limite estrito de **10 paradas** (1 origem + até 9 destinos intermediários). Links que excedem essa quantidade removem pontos finais silenciosamente.
-* **Apple Maps**: Oferece suporte nativo para até **15 paradas** em links universais.
-* **Abordagem de Escala**: Para frotas que visitem mais de 10 localidades, a interface deve fracionar a rota consolidada em sub-rotas/pernas menores de ponto a ponto.
+### 2. Limitações e Fracionamento de Links de Despacho GPS
+A API implementa **fracionamento dinâmico automático (Route Chunking)** nos links de despacho retornados:
+* **Google Maps**: Possui limite estrito de **10 paradas** (1 origem, 8 paradas intermediárias, 1 destino). Rotas com mais de 10 pontos são automaticamente divididas em múltiplos links sequenciais no array `google_maps`, onde o ponto final de um trecho repete como a origem do seguinte.
+* **Apple Maps**: Limite nativo de **15 paradas** por link, dividido de forma análoga no array `apple_maps`.
+* **Consistência**: Isso elimina a necessidade de controle de fracionamento no front-end, entregando listas ordenadas prontas para despacho.
 
 ---
 
@@ -160,8 +160,13 @@ Chama [otimizar_rota](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py
     { "nome": "Deposito_Sao_Paulo", "lon": -46.6333, "lat": -23.5505 }
   ],
   "links_navegacao": {
-    "google_maps": "https://www.google.com/maps/dir/?api=1...",
-    "apple_maps": "https://maps.apple.com/directions?source=..."
+    "google_maps": [
+      "https://www.google.com/maps/dir/?api=1&origin=-23.5505%2C-46.6333&destination=-22.0081%2C-47.8908&waypoints=...",
+      "https://www.google.com/maps/dir/?api=1&origin=-22.0081%2C-47.8908&destination=-23.5505%2C-46.6333&waypoints=..."
+    ],
+    "apple_maps": [
+      "https://maps.apple.com/directions?source=-23.5505,-46.6333&destination=-23.5505,-46.6333&waypoint=...&mode=driving"
+    ]
   }
 }
 ```
