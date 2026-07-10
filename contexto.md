@@ -35,10 +35,10 @@ Este documento consolida o estado atual do desenvolvimento de uma API de alto de
 ## 3. Regras de Negócio e Limitações
 
 * **Validação de Payload (Pydantic)**: Cada ponto de parada enviado deve, obrigatoriamente, conter uma string identificadora no campo `nome`, além de floats para `lat` (latitude) e `lon` (longitude). Modelo definido em [Localidade](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L96).
-* **Restrições de Provedores de Mapas (Links de Despacho)**:
-  * **Google Maps**: Possui um teto rígido de 10 paradas (1 origem + 9 destinos) por link clássico. Payloads maiores resultam em exclusão automática de pontos finais (como Curitiba ou Guarapuava) no carregamento visual.
-  * **Apple Maps**: Oferece suporte nativo para até 15 paradas via links universais de navegação.
-  * **Abordagem de Escala**: Para frotas que visitem mais de 10 localidades, a interface do usuário final deve fracionar a rota consolidada em sub-rotas menores de ponto a ponto ("pernas de rota").
+* **Restrições de Provedores de Mapas e Fracionamento (Links de Despacho)**:
+  * **Google Maps**: Possui limite estrito de 10 paradas (1 origem, 8 paradas intermediárias, 1 destino). Rotas maiores são divididas automaticamente pelo backend em múltiplos links no array `google_maps`.
+  * **Apple Maps**: Possui limite de 15 paradas por link, também dividido automaticamente pelo backend no array `apple_maps`.
+  * **Abordagem de Escala**: O fracionamento (Route Chunking) é realizado dinamicamente no backend de forma transparente. A coordenada de destino final de um pedaço é a origem do próximo pedaço.
 * **Validação Estrita de Escopos**: A invocação do endpoint de roteamento `/otimizar-rota` exige a presença explícita do escopo `"otimizar"` associado ao registro de chave autenticado, retornando `403 Forbidden` na ausência desta permissão.
 
 ---
