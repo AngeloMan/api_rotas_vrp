@@ -95,68 +95,84 @@ Ao gerar os links de despacho de rotas para os motoristas no retorno da API:
 
 ---
 
-## 🔐 Segurança e Autenticação (Estado Atual)
+## 🔐 Segurança e Autenticação
 
-A autenticação é realizada via cabeçalho HTTP customizado `X-API-Key` avaliado por [get_usuario_autenticado](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L27). Se a chave estiver inválida ou ausente, a API retorna `403 Forbidden`.
+A API utiliza autenticação por meio do cabeçalho customizado `X-API-Key` ou através de `Authorization: Bearer <API_KEY>` avaliados por [get_usuario_autenticado](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L133). Se a chave estiver incorreta, inativa ou expirada, o sistema retornará `403 Forbidden`.
 
-### Chaves de Teste Padrão (In-Memory) em [API_KEYS_DB](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L18):
-* `sk_test_user1` (Usuário master / admin)
-* `sk_test_user2`
+### 1. Hashing SHA-256 e Segurança
+Por motivos de segurança, o servidor **nunca** armazena a chave de API em texto puro. Armazena-se apenas o hash SHA-256 da chave. O segredo em texto puro (ex: `sk_live_...`) é retornado uma única vez no momento da criação da chave.
+
+### 2. Chave Mestre de Testes (In-Memory)
+Ao inicializar o [app.py](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py), o sistema pré-carrega uma chave mestre estável:
+* **Segredo (para autenticação):** `sk_test_user1`
+* **ID:** `master_01`
+* **Escopos:** `["admin", "otimizar"]`
+* **Ativa:** Sim (protegida contra desativação)
+* **Expiração:** Vitalícia (None)
 
 ---
 
-## 🗺️ Endpoints da API (Estado Atual)
+## 🗺️ Endpoints da API
 
-A documentação interativa Swagger pode ser acessada em:
+A documentação interativa Swagger pode ser acessada localmente em:
 👉 **[http://localhost:8000/docs](http://localhost:8000/docs)**
 
-### 1. Otimizar Rota (`POST /otimizar-rota`)
-Chama [otimizar_rota](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L172) para ordenar a sequência de visitação mais rápida entre os pontos usando Google OR-Tools e OSRM.
+### 1. Otimização de Rotas (`POST /otimizar-rota`)
+Chama [otimizar_rota](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L362) para ordenar a sequência ideal de visitas minimizando o tempo total de viagem através do algoritmo do OR-Tools alimentado por OSRM.
 
-* **Payload Exemplo (Caso Interestadual com 10 Pontos)**:
-  ```json
-  {
-    "pontos": [
-      { "nome": "Deposito_Sao_Paulo", "lat": -23.5505, "lon": -46.6333 },
-      { "nome": "Campinas", "lat": -22.9056, "lon": -47.0608 },
-      { "nome": "Sao_Carlos", "lat": -22.0081, "lon": -47.8908 },
-      { "nome": "Curitiba", "lat": -25.4290, "lon": -49.2671 },
-      { "nome": "Londrina", "lat": -23.3106, "lon": -51.1628 },
-      { "nome": "Guarapuava", "lat": -25.3954, "lon": -51.4578 },
-      { "nome": "Pato_Branco", "lat": -26.2295, "lon": -52.6712 },
-      { "nome": "Cascavel", "lat": -24.9578, "lon": -53.4597 },
-      { "nome": "Toledo", "lat": -24.7115, "lon": -53.7427 },
-      { "nome": "Foz_do_Iguacu", "lat": -25.5478, "lon": -54.5882 }
-    ]
-  }
-  ```
+* **Payload Exemplo (Caso de Teste Interestadual - 10 Localidades)**:
+```json
+{
+  "pontos": [
+    { "nome": "Deposito_Sao_Paulo", "lat": -23.5505, "lon": -46.6333 },
+    { "nome": "Campinas", "lat": -22.9056, "lon": -47.0608 },
+    { "nome": "Sao_Carlos", "lat": -22.0081, "lon": -47.8908 },
+    { "nome": "Curitiba", "lat": -25.4290, "lon": -49.2671 },
+    { "nome": "Londrina", "lat": -23.3106, "lon": -51.1628 },
+    { "nome": "Guarapuava", "lat": -25.3954, "lon": -51.4578 },
+    { "nome": "Pato_Branco", "lat": -26.2295, "lon": -52.6712 },
+    { "nome": "Cascavel", "lat": -24.9578, "lon": -53.4597 },
+    { "nome": "Toledo", "lat": -24.7115, "lon": -53.7427 },
+    { "nome": "Foz_do_Iguacu", "lat": -25.5478, "lon": -54.5882 }
+  ]
+}
+```
 
 * **Resposta Exemplo (JSON)**:
-  ```json
-  {
-    "status": "sucesso",
-    "usuario_autenticado": {
-      "user_id": 1,
-      "nome": "user1"
-    },
-    "tempo_total_minutos": 1987.47,
-    "distancia_total_km": 2445.93,
-    "ordem_entrega": [
-      { "nome": "Deposito_Sao_Paulo", "lon": -46.6333, "lat": -23.5505 },
-      { "nome": "Curitiba", "lon": -49.2671, "lat": -25.429 },
-      ...
-      { "nome": "Deposito_Sao_Paulo", "lon": -46.6333, "lat": -23.5505 }
-    ],
-    "links_navegacao": {
-      "google_maps": "https://www.google.com/maps/dir/?api=1...",
-      "apple_maps": "https://maps.apple.com/directions?source=..."
-    }
+```json
+{
+  "status": "sucesso",
+  "usuario_autenticado": {
+    "id": "master_01",
+    "name": "Chave de Testes",
+    "scopes": ["admin", "otimizar"],
+    "active": true,
+    "expires_at": null,
+    "created_at": "2026-07-10T13:30:00.000000",
+    "last_used_at": "2026-07-10T13:32:00.000000"
+  },
+  "tempo_total_minutos": 1987.47,
+  "distancia_total_km": 2445.93,
+  "ordem_entrega": [
+    { "nome": "Deposito_Sao_Paulo", "lon": -46.6333, "lat": -23.5505 },
+    { "nome": "Curitiba", "lon": -49.2671, "lat": -25.429 },
+    ...
+    { "nome": "Deposito_Sao_Paulo", "lon": -46.6333, "lat": -23.5505 }
+  ],
+  "links_navegacao": {
+    "google_maps": "https://www.google.com/maps/dir/?api=1...",
+    "apple_maps": "https://maps.apple.com/directions?source=..."
   }
-  ```
+}
+```
 
-### 2. Gerenciamento de Chaves Admin (Rudimentar)
-* `POST /admin/chaves`: Adiciona um novo token em tempo de execução via [adicionar_chave](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L53).
-* `DELETE /admin/chaves/{chave_para_remover}`: Revoga um token em tempo de execução via [remover_chave](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L65).
+### 2. Gerenciamento de API Keys (`/api-keys`)
+Estes endpoints requerem autenticação administrativa com o componente nativo de segurança `HTTPBearer` do FastAPI (que exibe o botão **Authorize** e o ícone de cadeado no Swagger UI). Para homologação local, clique no cadeado da rota e insira qualquer string não vazia.
+
+* **`POST /api-keys`**: Cria uma nova chave de API através de [criar_api_key](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L206). Retorna a chave em texto puro apenas uma vez na resposta.
+* **`GET /api-keys`**: Lista os metadados (sem expor a chave ou o hash) de todas as chaves cadastradas via [listar_api_keys](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L219).
+* **`PATCH /api-keys/{id}`**: Realiza atualizações parciais (nome, escopos, ativo) em uma chave de API através de [atualizar_api_key](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L228). Bloqueia a desativação de `master_01`.
+* **`DELETE /api-keys/{id}`**: Realiza soft delete da chave (active=False) via [remover_api_key](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py#L249). Bloqueia a desativação da chave master.
 
 ---
 
@@ -165,7 +181,7 @@ Chama [otimizar_rota](file:///c:/Users/angel/Documents/teste_rotas_brasil/app.py
 Valide o funcionamento executando o bloco abaixo no PowerShell da sua máquina:
 
 ```powershell
-# 1. Configura a chave de autenticação
+# 1. Configura a chave de autenticação logística (X-API-Key ou Bearer)
 $headers = @{ "X-API-Key" = "sk_test_user1" }
 
 # 2. Prepara o payload de 10 localidades
@@ -187,34 +203,4 @@ $body = @{
 # 3. Dispara a requisição
 Invoke-RestMethod -Uri "http://localhost:8000/otimizar-rota" -Method Post -Headers $headers -ContentType "application/json" -Body $body
 ```
-
----
-
-## 📈 Roadmap / Próximos Passos (Nova Camada de Credenciais)
-
-Conforme as definições de arquitetura de segurança descritas no [contexto.md](file:///c:/Users/angel/Documents/teste_rotas_brasil/contexto.md#L209-L254), a API passará por uma refatoração para substituir os endpoints rudimentares `/admin/chaves` por um ecossistema RESTful profissional sob `/api-keys`.
-
-### 1. Nova Estrutura de Chaves
-A base de chaves `API_KEYS_DB` passará a conter objetos estruturados com os seguintes metadados:
-```python
-API_KEYS_DB: Dict[str, dict] = {
-    "sk_test_user1": {
-        "id": "key_master_01",
-        "user_id": 1,
-        "nome": "user1",
-        "descricao": "Chave Mestre de Desenvolvimento",
-        "permissoes": ["admin", "otimizar"],
-        "data_expiracao": None,  # None = Vitalícia
-        "criado_em": "2026-07-10T11:41:00"
-    }
-}
-```
-
-### 2. Novos Endpoints (/api-keys)
-* **`POST /api-keys`**: Cria uma nova chave (exige permissão `"admin"`). Gera um token seguro prefixado com `sk_live_...` utilizando `secrets.token_hex(16)`.
-* **`GET /api-keys`**: Lista os metadados de todas as chaves ativas (nunca exibe a string secreta `sk_live_...`).
-* **`DELETE /api-keys/{id}`**: Revoga uma chave permanentemente pelo seu `id` (bloqueada a remoção de `sk_test_user1`).
-* **`PATCH /api-keys/{id}`**: Atualização parcial de descrições, permissões ou datas de expiração.
-
-### 3. Validação de Expiração
-O validador `get_usuario_autenticado` será atualizado para validar a data de expiração da chave em tempo real comparando a propriedade `data_expiracao` contra a hora atual (`datetime.now()`), retornando `403 Forbidden` se expirada.
+icado` será atualizado para validar a data de expiração da chave em tempo real comparando a propriedade `data_expiracao` contra a hora atual (`datetime.now()`), retornando `403 Forbidden` se expirada.

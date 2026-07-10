@@ -1,10 +1,14 @@
-from fastapi import FastAPI, HTTPException, Security, Depends, status
-from fastapi.security import APIKeyHeader
+from fastapi import FastAPI, HTTPException, Security, Depends, status, Header
+from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Optional
 import requests
 import urllib.parse
 import os
+import hashlib
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 
@@ -13,27 +17,82 @@ app = FastAPI(
     description="API integrada com OSRM Nacional e gerenciamento dinâmico de credenciais."
 )
 
-# 1. Banco de Dados em Memória (Dinâmico para homologação)
-# Começa com os usuários padrão do README
-API_KEYS_DB: Dict[str, dict] = {
-    "sk_test_user1": {"user_id": 1, "nome": "user1"},
-    "sk_test_user2": {"user_id": 2, "nome": "user2"}
-}
+# 1. Classe de Gerenciamento de Chaves de API
+class ApiKeyManager:
+    def __init__(self):
+        self._by_id: Dict[str, dict] = {}
+        self._by_hash: Dict[str, dict] = {}
+        self._inicializar_chave_mestre()
 
-# Configurar o cabeçalho X-API-Key
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+    def _inicializar_chave_mestre(self):
+        # Hashing estático da string "sk_test_user1"
+        master_key = "sk_test_user1"
+        master_hash = hashlib.sha256(master_key.encode()).hexdigest()
+        
+        registro = {
+            "id": "master_01",
+            "name": "Chave de Testes",
+            "active": True,
+            "scopes": ["admin", "otimizar"],
+            "expires_at": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_used_at": None
+        }
+        
+        self._by_id["master_01"] = registro
+        self._by_hash[master_hash] = registro
 
-# Dependência de Validação de API Key
-def get_usuario_autenticado(api_key: str = Security(api_key_header)):
-    if not api_key or api_key not in API_KEYS_DB:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Chave de API inválida ou ausente"
-        )
-    return API_KEYS_DB[api_key]
+    def create_key(self, name: str, scopes: List[str], expires_in_days: Optional[int] = None) -> tuple[dict, str]:
+        plain_key = f"sk_live_{secrets.token_hex(32)}"
+        key_hash = hashlib.sha256(plain_key.encode()).hexdigest()
+        
+        key_id = str(uuid.uuid4())
+        
+        expires_at = None
+        if expires_in_days is not None:
+            expires_at = (datetime.now(timezone.utc) + timedelta(days=expires_in_days)).isoformat()
+            
+        registro = {
+            "id": key_id,
+            "name": name,
+            "scopes": scopes,
+            "active": True,
+            "expires_at": expires_at,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_used_at": None
+        }
+        
+        self._by_id[key_id] = registro
+        self._by_hash[key_hash] = registro
+        
+        return registro, plain_key
 
+    def update_key(self, key_id: str, name: Optional[str] = None, scopes: Optional[List[str]] = None, active: Optional[bool] = None) -> Optional[dict]:
+        registro = self._by_id.get(key_id)
+        if not registro:
+            return None
+            
+        if name is not None:
+            registro["name"] = name
+        if scopes is not None:
+            registro["scopes"] = scopes
+        if active is not None:
+            if key_id == "master_01" and active is False:
+                raise ValueError("Não é permitido desativar a chave mestre de testes.")
+            registro["active"] = active
+            
+        return registro
 
-# --- MODELOS DE ENTRADA ---
+    def get_by_hash(self, key_hash: str) -> Optional[dict]:
+        return self._by_hash.get(key_hash)
+
+    def list_keys(self) -> List[dict]:
+        return list(self._by_id.values())
+
+# Instancia o gerenciador global
+api_key_manager = ApiKeyManager()
+
+# --- MODELOS PYDANTIC ---
 class Localidade(BaseModel):
     nome: str
     lon: float
@@ -42,39 +101,181 @@ class Localidade(BaseModel):
 class RequisicaoRota(BaseModel):
     pontos: List[Localidade]
 
-class NovaChave(BaseModel):
-    chave: str
-    user_id: int
-    nome: str
+class CriarApiKey(BaseModel):
+    name: str
+    scopes: List[str] = ["otimizar"]
+    expires_in_days: Optional[int] = None
 
+class AtualizarApiKey(BaseModel):
+    name: Optional[str] = None
+    scopes: Optional[List[str]] = None
+    active: Optional[bool] = None
 
-# --- ENDPOINTS DE GERENCIAMENTO DE CHAVES (PEDIDO 2) ---
+class RespostaApiKey(BaseModel):
+    id: str
+    name: str
+    scopes: List[str]
+    active: bool
+    expires_at: Optional[str] = None
+    created_at: str
+    last_used_at: Optional[str] = None
 
-@app.post("/admin/chaves", status_code=status.HTTP_201_CREATED, tags=["Admin - Gerenciamento de Chaves"])
-def adicionar_chave(payload: NovaChave, usuario_adm: dict = Depends(get_usuario_autenticado)):
+class RespostaCriacaoApiKey(RespostaApiKey):
+    api_key: str
+
+# --- DEPENDÊNCIAS DE AUTENTICAÇÃO E AUTORIZAÇÃO ---
+
+# Esquema de segurança nativo para Bearer Token
+security_admin = HTTPBearer(auto_error=False)
+
+# Cabeçalho customizado para autenticação simples
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def get_admin_usuario(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_admin)):
     """
-    Adiciona uma nova chave autorizada no sistema em tempo de execução.
-    Protegido pela própria API Key por segurança nesta fase.
+    Dependência nativa para validar o token de Administrador.
+    O Swagger agora gerará o cadeado correto para esta rota.
     """
-    if payload.chave in API_KEYS_DB:
-        raise HTTPException(status_code=400, detail="Esta chave já está cadastrada.")
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de administrador inválido ou ausente"
+        )
+        
+    token = credentials.credentials
+    if not token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de administrador não pode ser vazio"
+        )
+        
+    return token
+
+def get_usuario_autenticado(
+    x_api_key: Optional[str] = Security(api_key_header),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Dependência de autenticação para as rotas logísticas da API.
+    Aceita chaves de API tanto via header X-API-Key quanto via Authorization: Bearer <API_KEY>.
+    """
+    api_key = None
+    if x_api_key:
+        api_key = x_api_key
+    elif authorization:
+        if authorization.startswith("Bearer "):
+            api_key = authorization[7:]
+        else:
+            api_key = authorization
+            
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chave de API inválida ou ausente"
+        )
+        
+    # Calcule o hash SHA-256
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     
-    API_KEYS_DB[payload.chave] = {"user_id": payload.user_id, "nome": payload.nome}
-    return {"status": "sucesso", "mensagem": f"Chave para o usuário {payload.nome} ativada."}
+    # Busca a chave pelo hash
+    registro = api_key_manager.get_by_hash(key_hash)
+    if not registro:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chave de API inválida ou ausente"
+        )
+        
+    # Validações de status e expiração
+    if not registro.get("active"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chave de API inativa"
+        )
+        
+    expires_at_str = registro.get("expires_at")
+    if expires_at_str:
+        expires_at = datetime.fromisoformat(expires_at_str)
+        if datetime.now(timezone.utc) > expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Chave de API expirada"
+            )
 
-@app.delete("/admin/chaves/{chave_para_remover}", tags=["Admin - Gerenciamento de Chaves"])
-def remover_chave(chave_para_remover: str, usuario_adm: dict = Depends(get_usuario_autenticado)):
+    # Validação estrita de escopo para otimização de rotas
+    if "otimizar" not in registro.get("scopes", []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta chave de API não possui permissão para otimizar rotas"
+        )
+            
+    # Atualiza o timestamp de último uso direto no objeto em memória (com timezone)
+    registro["last_used_at"] = datetime.now(timezone.utc).isoformat()
+    return registro
+
+# --- ENDPOINTS DE GERENCIAMENTO DE API KEYS ---
+
+@app.post("/api-keys", response_model=RespostaCriacaoApiKey, status_code=status.HTTP_201_CREATED, tags=["Gerenciamento de API Keys"])
+def criar_api_key(payload: CriarApiKey, admin_token: str = Depends(get_admin_usuario)):
     """
-    Revoga uma chave de API imediatamente, impedindo novos cálculos de rota por ela.
+    Gera uma nova API key. Apenas chaves com permissão de administrador podem invocar este fluxo.
+    Retorna a chave em texto puro uma única vez na resposta de criação.
     """
-    if chave_para_remover == "sk_test_user1":
-        raise HTTPException(status_code=400, detail="Não é permitido remover a chave mestre de testes.")
+    registro, plain_key = api_key_manager.create_key(
+        name=payload.name,
+        scopes=payload.scopes,
+        expires_in_days=payload.expires_in_days
+    )
+    return RespostaCriacaoApiKey(**registro, api_key=plain_key)
+
+@app.get("/api-keys", response_model=List[RespostaApiKey], tags=["Gerenciamento de API Keys"])
+def listar_api_keys(admin_token: str = Depends(get_admin_usuario)):
+    """
+    Lista os metadados de todas as API keys cadastradas no sistema.
+    Por motivos de segurança, o segredo da chave e seu hash SHA-256 nunca são expostos.
+    """
+    keys = api_key_manager.list_keys()
+    return [RespostaApiKey(**k) for k in keys]
+
+@app.patch("/api-keys/{key_id}", response_model=RespostaApiKey, tags=["Gerenciamento de API Keys"])
+def atualizar_api_key(key_id: str, payload: AtualizarApiKey, admin_token: str = Depends(get_admin_usuario)):
+    """
+    Realiza uma modificação parcial nas propriedades de uma chave de API identificada pelo ID.
+    Trava de segurança impede a desativação da chave master de testes.
+    """
+    try:
+        registro = api_key_manager.update_key(
+            key_id=key_id,
+            name=payload.name,
+            scopes=payload.scopes,
+            active=payload.active
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
         
-    if chave_para_remover not in API_KEYS_DB:
-        raise HTTPException(status_code=404, detail="Chave não encontrada ou já revogada.")
+    if not registro:
+        raise HTTPException(status_code=404, detail="Chave de API não encontrada")
         
-    del API_KEYS_DB[chave_para_remover]
-    return {"status": "sucesso", "mensagem": "Chave revogada com sucesso."}
+    return RespostaApiKey(**registro)
+
+@app.delete("/api-keys/{key_id}", tags=["Gerenciamento de API Keys"])
+def remover_api_key(key_id: str, admin_token: str = Depends(get_admin_usuario)):
+    """
+    Desativa permanentemente uma chave de API (Soft Delete) referenciada por seu ID.
+    Bloqueia explicitamente a remoção da chave master de homologação ("master_01").
+    """
+    try:
+        registro = api_key_manager.update_key(
+            key_id=key_id,
+            active=False
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    if not registro:
+        raise HTTPException(status_code=404, detail="Chave de API não encontrada")
+        
+    return {"status": "sucesso", "mensagem": f"Chave {key_id} desativada com sucesso (soft delete)."}
+
 
 
 # --- MOTOR DE ROTAS ---
